@@ -1,3 +1,21 @@
+> **Note**: This is a fork of [tw93/Pake](https://github.com/tw93/Pake) with additional features:
+>
+> ### Fork Features
+>
+> **1. Multi-Window Support (macOS)**
+> - Press **Cmd+N** or use **File > New Window** to open additional windows
+> - New windows open to the app's origin URL
+>
+> **2. URL Argument Support**
+> - Open specific URLs in new windows via command line:
+>   ```bash
+>   open -n -a "MyApp" --args 'https://example.com/specific/path'
+>   ```
+> - URLs are validated to match the app's configured domain
+> - Enables integration with tools like Raycast to open specific pages
+>
+> ---
+
 <h4 align="right"><strong>English</strong> | <a href="README_CN.md">简体中文</a></h4>
 <p align="center">
     <img src=https://gw.alipayobjects.com/zos/k/fa/logo-modified.png width=138/>
