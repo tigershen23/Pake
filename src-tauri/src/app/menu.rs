@@ -1,9 +1,12 @@
 // Menu functionality is only used on macOS
 #![cfg(target_os = "macos")]
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
 use tauri_plugin_opener::OpenerExt;
+
+static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 pub fn get_menu(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
     let pake_version = env!("CARGO_PKG_VERSION");
@@ -46,6 +49,14 @@ fn app_menu(app: &AppHandle<Wry>) -> tauri::Result<Submenu<Wry>> {
 
 fn file_menu(app: &AppHandle<Wry>) -> tauri::Result<Submenu<Wry>> {
     let file_menu = Submenu::new(app, "File", true)?;
+    file_menu.append(&MenuItem::with_id(
+        app,
+        "new_window",
+        "New Window",
+        true,
+        Some("CmdOrCtrl+N"),
+    )?)?;
+    file_menu.append(&PredefinedMenuItem::separator(app)?)?;
     file_menu.append(&PredefinedMenuItem::close_window(app, None)?)?;
     file_menu.append(&PredefinedMenuItem::separator(app)?)?;
     file_menu.append(&MenuItem::with_id(
@@ -181,6 +192,34 @@ fn help_menu(app: &AppHandle<Wry>, title: &str) -> tauri::Result<Submenu<Wry>> {
 
 pub fn handle_menu_click(app_handle: &AppHandle, id: &str) {
     match id {
+        "new_window" => {
+            if let Some(main_window) = app_handle.get_webview_window("pake") {
+                let app_handle_clone = app_handle.clone();
+                let window_num = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
+                let window_label = format!("pake-{}", window_num);
+
+                let main_window_clone = main_window.clone();
+                tauri::async_runtime::spawn(async move {
+                    let home_url = main_window_clone
+                        .url()
+                        .map(|u| {
+                            let origin = format!("{}://{}", u.scheme(), u.host_str().unwrap_or("localhost"));
+                            origin
+                        })
+                        .unwrap_or_else(|_| "about:blank".to_string());
+
+                    let url = WebviewUrl::External(home_url.parse().unwrap_or_else(|_| "about:blank".parse().unwrap()));
+
+                    if let Err(e) = WebviewWindowBuilder::new(&app_handle_clone, &window_label, url)
+                        .title("")
+                        .inner_size(1200.0, 780.0)
+                        .build()
+                    {
+                        eprintln!("Failed to create new window: {}", e);
+                    }
+                });
+            }
+        }
         "pake_github_link" => {
             let _ = app_handle
                 .opener()
