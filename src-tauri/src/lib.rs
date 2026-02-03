@@ -2,12 +2,15 @@
 mod app;
 mod util;
 
-use tauri::Manager;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_window_state::Builder as WindowStatePlugin;
 use tauri_plugin_window_state::StateFlags;
 
 #[cfg(target_os = "macos")]
 use std::time::Duration;
+
+static WINDOW_COUNTER: AtomicUsize = AtomicUsize::new(1);
 
 const WINDOW_SHOW_DELAY: u64 = 50;
 
@@ -20,6 +23,31 @@ use app::{
     window::set_window,
 };
 use util::get_pake_config;
+
+/// Extract a valid URL from arguments that matches the configured domain
+fn extract_url_arg(args: &[String], config_url: &str) -> Option<String> {
+    let allowed_host = config_url
+        .strip_prefix("https://")
+        .or_else(|| config_url.strip_prefix("http://"))
+        .and_then(|s| s.split('/').next())
+        .unwrap_or("");
+
+    args.iter()
+        .skip(1)
+        .find(|arg| {
+            if arg.starts_with("https://") || arg.starts_with("http://") {
+                if let Some(host) = arg
+                    .strip_prefix("https://")
+                    .or_else(|| arg.strip_prefix("http://"))
+                    .and_then(|s| s.split('/').next())
+                {
+                    return host == allowed_host;
+                }
+            }
+            false
+        })
+        .cloned()
+}
 
 pub fn run_app() {
     #[cfg(target_os = "linux")]
@@ -59,8 +87,28 @@ pub fn run_app() {
 
     // Only add single instance plugin if multiple instances are not allowed
     if !multi_instance {
-        app_builder = app_builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("pake") {
+        let config_url_for_callback = pake_config.windows[0].url.clone();
+        let window_width = pake_config.windows[0].width;
+        let window_height = pake_config.windows[0].height;
+        app_builder = app_builder.plugin(tauri_plugin_single_instance::init(move |app, args, _cwd| {
+            // If URL argument provided, open in a new window
+            if let Some(url) = extract_url_arg(&args, &config_url_for_callback) {
+                let window_id = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
+                let window_label = format!("pake-{}", window_id);
+                if let Ok(new_window) = WebviewWindowBuilder::new(
+                    app,
+                    &window_label,
+                    WebviewUrl::External(url.parse().unwrap()),
+                )
+                .title("")
+                .inner_size(window_width, window_height)
+                .build()
+                {
+                    let _ = new_window.show();
+                    let _ = new_window.set_focus();
+                }
+            } else if let Some(window) = app.get_webview_window("pake") {
+                // No URL, just show/focus existing window
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -91,6 +139,19 @@ pub fn run_app() {
             // --- Menu Construction End ---
 
             let window = set_window(app, &pake_config, &tauri_config);
+
+            // Handle URL argument on initial launch
+            let launch_args: Vec<String> = std::env::args().collect();
+            let config_url_for_launch = pake_config.windows[0].url.clone();
+            if let Some(url) = extract_url_arg(&launch_args, &config_url_for_launch) {
+                let window_clone = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    let script = format!("window.location.href = '{}'", url.replace('\'', "\\'"));
+                    let _ = window_clone.eval(&script);
+                });
+            }
+
             set_system_tray(
                 app.app_handle(),
                 show_system_tray,
